@@ -1,18 +1,63 @@
 services:
   postgres:
-    image: postgres
-    restart: always
+    image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: permissions
-    ports:
-      - "5432:5432"
     volumes:
-      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d permissions']
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   nats:
-    image: nats
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    # -js: enable JetStream (used for the KV cache), -m: monitoring endpoint for the healthcheck.
+    command: ['-js', '-m', '8222']
     ports:
-      - "4222:4222"
-    command: ["-js"]
+      - '4222:4222' # so you can talk to the service directly, e.g. with the `nats` CLI
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8222/healthz || exit 1']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  permissions:
+    build: .
+    restart: unless-stopped
+    command: ['node', 'dist/permissions/main.js']
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/permissions
+      NATS_URL: nats://nats:4222
+      CACHE_TTL_SECONDS: 300
+    # Two replicas in the same NATS queue group: each request is handled by exactly one of them.
+    deploy:
+      replicas: 2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  gateway:
+    build: .
+    restart: unless-stopped
+    command: ['node', 'dist/gateway/main.js']
+    environment:
+      PORT: 3000
+      NATS_URL: nats://nats:4222
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+      SERVICE_TOKEN: ${SERVICE_TOKEN:?set SERVICE_TOKEN in .env}
+    ports:
+      - '3000:3000'
+    depends_on:
+      nats:
+        condition: service_healthy
+
+volumes:
+  pgdata:
