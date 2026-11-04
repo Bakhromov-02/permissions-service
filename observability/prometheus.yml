@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ['gateway:3000']
+
+  # Docker's DNS returns one A record per replica, so every permissions-service instance is scraped,
+  # however many are running (`docker compose up --scale permissions=4`).
+  - job_name: permissions
+    dns_sd_configs:
+      - names: ['permissions']
+        type: A
+        port: 9464
+        refresh_interval: 5s
