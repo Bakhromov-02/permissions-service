@@ -1,6 +1,6 @@
 # Permissions Service
 
-[![CI](https://github.com/Bakhromov-02/permission-management-test/actions/workflows/ci.yml/badge.svg)](https://github.com/Bakhromov-02/permission-management-test/actions/workflows/ci.yml)
+[![CI](https://github.com/Bakhromov-02/permissions-service/actions/workflows/ci.yml/badge.svg)](https://github.com/Bakhromov-02/permissions-service/actions/workflows/ci.yml)
 
 A small microservice system that decides **which API keys may perform which actions**.
 A permissions service answers requests over **NATS** (request–reply), stores data in **PostgreSQL**, and caches lookups in a **NATS JetStream key-value bucket**.
