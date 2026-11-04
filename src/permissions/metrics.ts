@@ -27,6 +27,11 @@ export const createServiceMetrics = (registry: Registry) => {
       labelNames: ['result'] as const,
       registers,
     }),
+    dbPoolErrors: new Counter({
+      name: 'permissions_db_pool_errors_total',
+      help: 'Errors on idle pooled connections (e.g. PostgreSQL restart or failover); the pool replaces them',
+      registers,
+    }),
     dbQueryDuration: new Histogram({
       name: 'permissions_db_query_duration_seconds',
       help: 'PostgreSQL query time by operation and outcome',

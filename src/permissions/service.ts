@@ -112,6 +112,15 @@ export const startPermissionsService = async (
   });
   registerPoolMetrics(registry, pool);
 
+  // Without this listener, PostgreSQL closing an *idle* connection (restart, failover, admin kill)
+  // emits an unhandled 'error' event and crashes the process. The pool discards the broken client and
+  // opens a new one on the next query, so logging and counting it is all that is needed.
+  // See docs/incidents/2026-11-04-idle-connection-crash.md
+  pool.on('error', (error) => {
+    metrics.dbPoolErrors.inc();
+    logger.warn('db_idle_connection_error', { error: error.message });
+  });
+
   const migrated = await runMigrations(pool);
   if (migrated.length) logger.info('migrations_applied', { migrations: migrated });
 

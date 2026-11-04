@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { Pool } from 'pg';
 import { NatsConnection } from 'nats';
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 
@@ -95,5 +96,24 @@ describe('resilience', () => {
 
     expect(await check(OTHER_KEY)).toEqual({ allowed: false });
     expect(await grant(OTHER_KEY)).toEqual({ status: 'ok' });
+  });
+
+  it('survives PostgreSQL terminating its connections (failover, restart, admin kill)', async () => {
+    await grant(KEY);
+    await check(OTHER_KEY); // opens pool connections that are now idle
+
+    // What a database failover or `pg_terminate_backend` does to every client connection.
+    const admin = new Pool({ connectionString: postgres.getConnectionUri() });
+    await admin.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+       WHERE datname = current_database() AND pid <> pg_backend_pid()`,
+    );
+    await admin.end();
+
+    // Give the pool a moment to notice the closed sockets.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(await check('sk_after_termination')).toEqual({ allowed: false });
+    expect(await grant('sk_after_termination')).toEqual({ status: 'ok' });
   });
 });
