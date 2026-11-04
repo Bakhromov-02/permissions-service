@@ -3,27 +3,40 @@ import { KV } from 'nats';
 import { Permission } from '../contracts';
 import { keyId } from '../shared/hash';
 import { Logger } from '../shared/logger';
+import { ServiceMetrics } from './metrics';
+
+export interface PermissionCache {
+  get(keyHash: string): Promise<Permission[] | null>;
+  set(keyHash: string, permissions: Permission[]): Promise<void>;
+  invalidate(keyHash: string): Promise<void>;
+}
 
 /**
  * Cache-aside store for the permission list of one API key, in a NATS JetStream KV bucket.
  * Every entry has the same shape (the full list), and writes invalidate the entry instead of
  * rewriting it. Cache errors never fail a request: the service falls back to the database.
  */
-export class PermissionCache {
+export class KvPermissionCache implements PermissionCache {
   constructor(
     private readonly kv: KV,
     private readonly logger: Logger,
+    private readonly metrics: ServiceMetrics,
   ) {}
 
   async get(keyHash: string): Promise<Permission[] | null> {
     try {
       const entry = await this.kv.get(keyHash);
       // Deleted/purged keys come back as entries with an empty value.
-      if (!entry || entry.operation !== 'PUT' || entry.length === 0) return null;
-      const value = entry.json<unknown>();
-      return Array.isArray(value) ? (value as Permission[]) : null;
+      const value = entry && entry.operation === 'PUT' && entry.length > 0 ? entry.json<unknown>() : null;
+      const permissions = Array.isArray(value) ? (value as Permission[]) : null;
+      this.metrics.cacheLookups.inc({ result: permissions ? 'hit' : 'miss' });
+      return permissions;
     } catch (error) {
-      this.logger.warn('cache_read_failed', { key: keyId(keyHash), error: String(error) });
+      this.metrics.cacheLookups.inc({ result: 'error' });
+      this.logger.warn('cache_read_failed', {
+        key: keyId(keyHash),
+        error: String(error),
+      });
       return null;
     }
   }
@@ -32,7 +45,10 @@ export class PermissionCache {
     try {
       await this.kv.put(keyHash, JSON.stringify(permissions));
     } catch (error) {
-      this.logger.warn('cache_write_failed', { key: keyId(keyHash), error: String(error) });
+      this.logger.warn('cache_write_failed', {
+        key: keyId(keyHash),
+        error: String(error),
+      });
     }
   }
 
@@ -41,7 +57,24 @@ export class PermissionCache {
       await this.kv.delete(keyHash);
     } catch (error) {
       // Bounded by the bucket TTL, so a missed invalidation can only serve stale data briefly.
-      this.logger.warn('cache_invalidate_failed', { key: keyId(keyHash), error: String(error) });
+      this.logger.warn('cache_invalidate_failed', {
+        key: keyId(keyHash),
+        error: String(error),
+      });
     }
   }
+}
+
+/** Used when CACHE_ENABLED=false: every read goes to PostgreSQL. */
+export class DisabledPermissionCache implements PermissionCache {
+  constructor(private readonly metrics: ServiceMetrics) {}
+
+  async get(): Promise<null> {
+    this.metrics.cacheLookups.inc({ result: 'miss' });
+    return null;
+  }
+
+  async set(): Promise<void> {}
+
+  async invalidate(): Promise<void> {}
 }

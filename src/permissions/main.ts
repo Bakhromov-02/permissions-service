@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { stopTracing } from './instrumentation';
 
 import { createLogger } from '../shared/logger';
 import { loadPermissionsConfig } from './config';
@@ -15,6 +16,7 @@ const main = async () => {
     stopping = true;
     logger.info('shutdown', { signal });
     await service.stop();
+    await stopTracing();
     process.exit(0);
   };
 
