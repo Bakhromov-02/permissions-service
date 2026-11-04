@@ -27,6 +27,11 @@ export const createServiceMetrics = (registry: Registry) => {
       labelNames: ['result'] as const,
       registers,
     }),
+    cacheFillConflicts: new Counter({
+      name: 'permissions_cache_fill_conflicts_total',
+      help: 'Cache fills skipped because the entry changed during the database read (a grant/revoke, or another replica filled it first)',
+      registers,
+    }),
     dbPoolErrors: new Counter({
       name: 'permissions_db_pool_errors_total',
       help: 'Errors on idle pooled connections (e.g. PostgreSQL restart or failover); the pool replaces them',

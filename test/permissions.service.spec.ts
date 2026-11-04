@@ -3,7 +3,12 @@ import { KV, NatsConnection } from 'nats';
 
 import { ErrorCode, Subjects } from '../src/contracts';
 import { hashApiKey } from '../src/shared/hash';
+import { Registry } from 'prom-client';
+
+import { KvPermissionCache } from '../src/permissions/cache';
+import { createServiceMetrics } from '../src/permissions/metrics';
 import { RunningService } from '../src/permissions/service';
+import { createLogger } from '../src/shared/logger';
 import { connectClient, createPool, openCache, request, resetState, startService } from './helpers';
 
 const BUCKET = 'service_spec_cache';
@@ -120,6 +125,26 @@ describe('permissions service over NATS', () => {
       await grant('billing', 'read');
       expect(await check('orders', 'read')).toEqual({ allowed: false });
       expect(await check('billing', 'read')).toEqual({ allowed: true });
+    });
+
+    it('never stores a stale list when a write races with a cache fill', async () => {
+      // Replays the race from docs/incidents/2026-11-04-stale-cache-after-revoke.md step by step.
+      const metrics = createServiceMetrics(new Registry());
+      const kvCache = new KvPermissionCache(cache, createLogger('race-test'), metrics);
+      const keyHash = hashApiKey('sk_race_regression');
+
+      const lookup = await kvCache.get(keyHash); // 1. a read misses…
+      expect(lookup.permissions).toBeNull();
+      await kvCache.invalidate(keyHash); // 2. …a grant/revoke commits and invalidates meanwhile…
+      await kvCache.fill(keyHash, [{ module: 'orders', action: 'read' }], lookup.revision); // 3. …late fill
+
+      expect((await kvCache.get(keyHash)).permissions).toBeNull(); // the stale list was rejected
+      expect((await metrics.cacheFillConflicts.get()).values[0].value).toBe(1);
+
+      // Without a concurrent write, the same fill succeeds.
+      const fresh = await kvCache.get(keyHash);
+      await kvCache.fill(keyHash, [{ module: 'orders', action: 'read' }], fresh.revision);
+      expect((await kvCache.get(keyHash)).permissions).toEqual([{ module: 'orders', action: 'read' }]);
     });
 
     it('caches empty results for unknown keys', async () => {
