@@ -25,7 +25,9 @@ import {
   Subject,
   Subjects,
 } from '../../contracts';
+import { traceRequest } from '../../shared/nats-tracing';
 import { GATEWAY_CONFIG, GatewayConfig } from '../config';
+import { GATEWAY_METRICS, GatewayMetrics } from '../metrics/gateway-metrics';
 
 const codec = JSONCodec();
 
@@ -35,7 +37,10 @@ export class PermissionsClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PermissionsClient.name);
   private nats?: NatsConnection;
 
-  constructor(@Inject(GATEWAY_CONFIG) private readonly config: GatewayConfig) {}
+  constructor(
+    @Inject(GATEWAY_CONFIG) private readonly config: GatewayConfig,
+    @Inject(GATEWAY_METRICS) private readonly metrics: GatewayMetrics,
+  ) {}
 
   async onModuleInit() {
     this.nats = await connect({ servers: this.config.natsUrl, name: 'gateway' });
@@ -77,24 +82,32 @@ export class PermissionsClient implements OnModuleInit, OnModuleDestroy {
   }
 
   private async request<T>(subject: Subject, payload: unknown): Promise<T> {
-    if (!this.nats) throw new ServiceUnavailableException('Not connected to NATS');
+    const nats = this.nats;
+    if (!nats) throw new ServiceUnavailableException('Not connected to NATS');
 
+    const stopTimer = this.metrics.natsDuration.startTimer({ subject });
     let body: unknown;
     try {
-      const reply = await this.nats.request(subject, codec.encode(payload), {
-        timeout: this.config.requestTimeoutMs,
-      });
+      // The trace context travels in NATS headers, so the service's span joins this request's trace.
+      const reply = await traceRequest(subject, (headers) =>
+        nats.request(subject, codec.encode(payload), { timeout: this.config.requestTimeoutMs, headers }),
+      );
       body = codec.decode(reply.data);
     } catch (error) {
       if (error instanceof NatsError && error.code === NatsErrorCode.NoResponders) {
+        stopTimer({ outcome: 'no_responders' });
         throw new ServiceUnavailableException('Permissions service is unavailable');
       }
       if (error instanceof NatsError && error.code === NatsErrorCode.Timeout) {
+        stopTimer({ outcome: 'timeout' });
         throw new GatewayTimeoutException('Permissions service did not respond in time');
       }
+      stopTimer({ outcome: 'error' });
       this.logger.error(`NATS request to ${subject} failed: ${String(error)}`);
       throw new BadGatewayException('Permissions service request failed');
     }
+
+    stopTimer({ outcome: isErrorResponse(body) ? body.error.code : 'ok' });
 
     if (isErrorResponse(body)) {
       const { code, message, details } = body.error;

@@ -45,12 +45,13 @@ export class PermissionHandlers {
   }
 
   private async load(keyHash: string): Promise<Permission[]> {
-    const cached = await this.cache.get(keyHash);
-    if (cached) return cached;
+    const lookup = await this.cache.get(keyHash);
+    if (lookup.permissions) return lookup.permissions;
 
     const permissions = await this.repository.list(keyHash);
     // Empty lists are cached too, so repeated checks for unknown keys don't hit the database.
-    await this.cache.set(keyHash, permissions);
+    // The fill is conditional on `lookup.revision`, so it is skipped if a write happened meanwhile.
+    await this.cache.fill(keyHash, permissions, lookup.revision);
     return permissions;
   }
 }

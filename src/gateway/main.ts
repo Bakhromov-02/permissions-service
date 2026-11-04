@@ -1,5 +1,6 @@
-import 'reflect-metadata';
 import 'dotenv/config';
+import { stopTracing } from './instrumentation';
+import 'reflect-metadata';
 
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -13,6 +14,9 @@ const bootstrap = async () => {
   const app = configureApp(await NestFactory.create(AppModule.forRoot(config)));
   await app.listen(config.port);
   Logger.log(`Gateway listening on :${config.port} — docs at /docs`, 'Bootstrap');
+
+  // enableShutdownHooks closes Nest (and drains NATS); flush pending spans after that.
+  process.once('beforeExit', () => void stopTracing());
 };
 
 bootstrap().catch((error) => {

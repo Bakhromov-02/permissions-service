@@ -122,7 +122,7 @@ describe('HTTP gateway → NATS → permissions service (e2e)', () => {
     // Runs last: stops the permissions service.
     it('returns 503 when no permissions-service instance is running', async () => {
       await service.stop();
-      service = { nats: service.nats, stop: async () => undefined };
+      service = { ...service, stop: async () => undefined };
 
       await api().post('/permissions/check').set('Authorization', SERVICE).send(body()).expect(503);
       const health = await api().get('/health').expect(503);

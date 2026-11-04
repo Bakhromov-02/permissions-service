@@ -12,7 +12,7 @@ const codec = JSONCodec();
 
 export const startService = (cacheBucket: string): Promise<RunningService> =>
   startPermissionsService(
-    { databaseUrl: DATABASE_URL, natsUrl: NATS_URL, cacheBucket, cacheTtlSeconds: 60 },
+    { databaseUrl: DATABASE_URL, natsUrl: NATS_URL, cacheBucket, cacheTtlSeconds: 60, metricsPort: 0 },
     createLogger('permissions-test'),
   );
 
